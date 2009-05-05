@@ -6,6 +6,7 @@
 # Copyright:: Copyright (c) 2009 Paweł Wilk
 # License::   LGPL
 #
+
 # This is the main exception handling class for HTSucker.
 
 class HTSuckerError < Exception; end
