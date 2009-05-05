@@ -18,9 +18,9 @@ require 'ipaddr'
 require 'open-uri'
 
 require 'bufferaffects'
-require '/htsucker/domains_to_languages'
-require '/htsucker/errors'
-require '/htsucker/htsucker'
+require 'htsucker/domains_to_languages'
+require 'htsucker/errors'
+require 'htsucker/htsucker'
 
 ## testing:
 #
