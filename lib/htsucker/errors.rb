@@ -6,6 +6,24 @@
 # Copyright:: Copyright (c) 2009 Paweł Wilk
 # License::   LGPL
 #
+# ==Errors hierarchy
+#
+#   HTSuckerError                       # main handler for exceptions
+#       HTSuckerSizeError               # size-related errors
+#           HTSuckerContentTooBig       # content length > accepted length
+#           HTSuckerContentOverflow     # read data > accepted length
+#
+#   HTSuckerConnectionFailed            # connection cannot be established
+#       HTSuckerTooManyConnections      # connection attempts > conn_retry
+#       HTSuckerTooManyRedirects        # redirects number > redir_retry
+#       HTSuckerTimeout                 # timeout occured
+#
+#   HTSuckerBadURI                      # bad URI errors
+#       HTSuckerMalformedURI            # malformed URI, e.g. empty string
+#       HTSuckerBadProtocol             # bad protocol in URI
+#       HTSuckerBadPort                 # bad port in URI
+#       HTSuckerURIPhohibited           # prohibited URI, e.g. blacklisted
+#
 
 # This is the main exception handling class for HTSucker.
 
@@ -57,5 +75,5 @@ class HTSuckerBadURI < HTSuckerError; end
 
   # This class handles exceptions caused by unsecure redirect attempts.
 
-  class HTSuckerRedirectPhohibited < HTSuckerBadURI; end
+  class HTSuckerURIPhohibited < HTSuckerBadURI; end
 

@@ -6,6 +6,21 @@
 # Copyright:: Copyright (c) 2009 Paweł Wilk
 # License::   LGPL
 
+# HTSucker class uses net/http and provides you an easy way of obtaining
+# documents from the Web. It follows redirects and allows you to set up
+# various connection parameters. It is intended to be used in programs
+# getting some information about web pages and processing resources that
+# aren't too big, since it keeps all data in memory.
+# 
+# It tries to figure out content language using server headers, HTML tags,
+# code markers, and if it fail uses top-level domain to spoken language mapping.
+# It doesn't use any XML object model to access (X)HTML tags, it relies
+# on regular expressions.
+# 
+# All operations are lazy, which means that after creating an object you will still be
+# able to change some connection parameters. Real fetching occur while accessing body,
+# headers or other data that requires network activity.
+
 class HTSucker
 
   include DomainsToLanguages
@@ -16,26 +31,61 @@ class HTSucker
   
   attr_reader :url
   
-  # Default options are matrix for defaults used by class method HTSucker.default_options
-  # while setting up class variable @@default_options which is used by instances as a
-  # matrix for options not given when creating new objects.
+  # :stopdoc:
+  # DefaultOpts constant is a matrix for defaults used by class. You should not change this constant.
+  # If you want to change default options for all instances of HTSucker use class method HTSucker.default_options.
+  DefaultOpts = {
+     :redir_retry              => 8,
+     :conn_retry               => 3,                
+     :open_timeout             => 15,
+     :read_timeout             => 10,
+     :total_timeout            => 30,
+     :allow_strange_ports      => false,
+     :ignore_content_overflows => false,
+     :max_length               => 524288,
+     :default_content_lanuage  => :en,
+     :default_content_type     => :"text/html",
+     :default_charset          => :"iso-8859-1"
+  }.freeze
+    
+  # attr_accessor *DefaultOpts.keys #(but then the rdoc documentation will not reckognize it)
+  # :startdoc:
   
-  DefaultOpts = { :redir_retry              => 5,
-                  :conn_retry               => 8,
-                  :total_retry              => 2,
-                  :read_timeout             => 15,
-                  :total_timeout            => 30,
-                  :default_content_lanuage  => 'en',
-                  :default_content_type     => 'text/html',
-                  :default_charset          => 'iso-8859-1',
-                  :allow_strange_ports      => false,
-                  :ignore_content_overflows => false,
-                  :max_length               => 524288 }.freeze
-  
-  attr_reader *DefaultOpts.keys
+  # default: +8+ retries
+  attr_accessor   :redir_retry
+  # default: +3+ retries
+  attr_accessor   :conn_retry           
+  # default: +15+ seconds
+  attr_accessor   :open_timeout
+  # default: +10+ seconds
+  attr_accessor   :read_timeout
+  # default: +30+ seconds (see also: default_options)
+  attr_accessor   :total_timeout
+  # default: +false+
+  attr_accessor   :allow_strange_ports
+  # default: +false+
+  attr_accessor   :ignore_content_overflows
+  # default: +524288+ bytes (512KB)
+  attr_accessor   :max_length
+  # default: +:en+
+  attr_accessor   :default_content_lanuage
+  # default: +:text/html+
+  attr_accessor   :default_content_type
+  # default: +:iso-8859-1+
+  attr_accessor   :default_charset
   
   # Creates new instance of HTSucker. +url+ parameter should be valid URI object or string.
-  # You may want to override defaults by issuing hash containing options you want to be changed.
+  # You may want to override default options by issuing hash containing with options you
+  # want to be different.
+  #
+  # Examples:
+  #
+  #     page = HTSucker.new('randomseed.pl')
+  #     page = HTSucker.new('ruby-lang.org', max_length => 0)
+  #     page.total_timeout = 1
+  #
+  # To know more about default options used by objects read section describing class method
+  # called HTSucker.default_options.
   
   def initialize(url, options=nil)
     default_options = self.class.default_options.dup
@@ -75,13 +125,13 @@ class HTSucker
     @url.freeze
   end
   
-  # Returns top-level domain for URL.
+  # Returns symbol representing top-level domain in URL.
   
   def domain
     self.url.host.split('.').last.downcase.to_sym
   end
   
-  # Returns top-level domain for real URL.
+  # Returns symbol representing top-level domain in real URL.
   
   def real_domain
     self.real_url.host.split('.').last.downcase.to_sym
@@ -239,11 +289,11 @@ class HTSucker
     return clang
   end
   
-  def language; content_language end
-  def lang;     content_language end
-
+  alias_method :language, :content_language
+  alias_method :lang,     :content_language
+  
   # Obtains charset from document body or server response header.
-
+  
   def get_page_info(default_content_type=nil, default_charset=nil)
     default_content_type  ||= @default_content_type
     default_charset       ||= @default_charset
@@ -329,6 +379,8 @@ class HTSucker
   
   def http_resource(url)
     res = Net::HTTP.new(url.host, url.port)
+    res.open_timeout = @open_timeout
+    res.read_timeout = @read_timeout
     case url.scheme.downcase.to_sym
     when :http
       return res
@@ -364,7 +416,7 @@ class HTSucker
           @response.each { |k,v| @header[k.downcase.to_sym] = v }
           @response.value
           header_length = @header[:"content-length"].to_s.to_i
-          if !max_length.zero? && header_length > max_length
+          if (!@ignore_content_overflows && !max_length.zero? && header_length > max_length)
             raise HTSuckerContentTooBig.new("content length (#{header_length}) is bigger than #{max_length} bytes")
           end
           @response.read_body do |segment|
@@ -400,8 +452,8 @@ class HTSucker
       
     rescue Net::HTTPRetriableError, Net::ProtoRetriableError, IOError, SystemCallError
       unless @header[:location].to_s.empty?
-        raise HTSuckerTooManyRedirects.new("too many redirects") if redir_retry <= 0
-        dest_url = URI.parse(@header[:location])          
+        raise HTSuckerTooManyRedirects.new("too many redirects") if !redir_retry.nil? && redir_retry <= 0
+        dest_url = URI.parse(@header[:location])
         validate_redirect(url, dest_url)
         validate_url(dest_url)
         url = dest_url
@@ -416,6 +468,9 @@ class HTSucker
     rescue HTSuckerSizeError
       raise unless @ignore_content_overflows
       
+    rescue TimeoutError
+      raise
+    
     rescue RuntimeError, Net::ProtocolError, Net::HTTPClientError, Net::HTTPServerError, Net::HTTPUnknownResponse
       raise HTSuckerConnectionFailed.new($!.to_s)  
     
@@ -430,7 +485,7 @@ class HTSucker
   def prepare_response(max=nil)
     return unless @response.nil?
     begin
-      Timeout::timeout(@timeout) { response_do(max) }
+      Timeout::timeout(@total_timeout) { response_do(max) }
     rescue Timeout::Error
       raise HTSuckerTimeout.new($!.to_s) 
     end
@@ -521,10 +576,93 @@ class HTSucker
     self.clean_words.split(' ')
   end
   
-  # Use this class method to set up default options used when creating new objects.
-  # For each option that you omit it will be taken from constant hash called DefaultOpts.
-  # Default options hash is stored in @@default_options. This method will return current
-  # default options when called without parameter.
+  # This class method allows you to to set default options used when creating new instances of HTSucker.
+  # Each option that you omit it will be taken from constant hash called +DefaultOpts+.
+  # This method will return current default options when called without parameter.
+  #
+  # ==== Example
+  #
+  #     HTSucker.default_options  :total_timeout            => 30,
+  #                               :default_content_lanuage  => 'pl',
+  #                               :default_charset          => 'iso-8859-2',
+  #                               :ignore_content_overflows => true
+  #
+  # ==== Options
+  #
+  # You can set class-level default options (as shown at the example above), you can pass
+  # options to specific instance when creating new object, you can also change object's options
+  # using accessors (the names are the same as keys presented here). Here are the meanings:
+  #
+  # ===== +:redir_retry+
+  # Synopsis:
+  #     :redir_retry => 8     # 8 redirects max
+  #     :redir_retry => 0     # no redirects allowed
+  #     :redir_retry => nil   # infinite number of redirects allowed
+  #
+  # This option sets maximum number of redirects that HTSucker will accept when fetching resource.
+  # Setting it to +nil+ disables limit but makes your program vulnerable to looped redirects. Setting
+  # it to 0 doesn't allow any redirect to happend. When retries count is reached the HTSuckerTooManyRedirects
+  # exception is raised.
+  #
+  # ===== +:conn_retry+
+  # Synopsis:
+  #     conn_retry => 3       # try 3 times
+  #     conn_retry => 0       # i'm feeling lucky
+  #     conn_retry => nil     # infinite reconnecting
+  #
+  # This option sets maximum number of retries while connecting and obtaining a content. Setting it to
+  # 0 disables retrying and setting it to +nil+ makes your application to retry until document is loaded.
+  # When retries count is reached the HTSuckerTooManyConnections exception is raised.
+  #
+  # ===== +:open_timeout+
+  # Synopsis:
+  #     open_timeout => 15    # wait 15 seconds for openning connection
+  #     open_timeout => 0     # disables timeout (relies on system default to be precise)
+  #
+  # This option sets number of seconds to wait until connection is opened.
+  # If the HTTP object cannot open a connection in this many seconds, it raises a HTSuckerTimeout exception.
+  #
+  # ===== +:read_timeout+
+  # Synopsis:
+  #     read_timeout => 10    # wait 15 seconds for receiving chunk of data
+  #     read_timeout => 0     # disables timeout (relies on system default to be precise)
+  #
+  # This option sets number of seconds to wait until reading one block (by one read(2) call).
+  # If the HTTP object cannot receive any data in this many seconds, it raises a HTSuckerTimeout exception.
+  #
+  # ===== +:total_timeout+
+  # Synopsis:
+  #     total_timeout => 30    # wait 30 seconds for receiving all of data
+  #     total_timeout => 0     # disables timeout
+  #
+  # This option sets number of seconds to wait until reading all the data. Setting it to 0
+  # disables timeout. If the HTSucker object cannot receive all the data in this many seconds,
+  # it raises a HTSuckerTimeout exception.
+  #
+  # ===== +:allow_strange_ports+
+  # Synopsis:
+  #     allow_strange_ports => false  # strange ports are not allowed
+  #     allow_strange_ports => true   # strange ports are allowed
+  #
+  # This option sets the blockade for using non-standard port numbers in URIs. Standard port
+  # numbers are: 80 for HTTP and 443 for HTTPS protocol. When non-standard port number is passed
+  # manually or by redirect, the exception HTSuckerBadPort is raised.
+  #
+  # ===== +:ignore_content_overflows+
+  # Synopsis:
+  #     ignore_content_overflows  => false  # raise an exception when size exceedes limit
+  #     ignore_content_overflows  => true   # silently abort reading when data exceeds limit
+  #
+  # This option decides whether to raise the HTSuckerContentTooBig exception when amount of data
+  # that is going to be read would be greater than max_length limit. It also controlls the same
+  # behaviour in case of data actually read – in that case HTSuckerContentOverflow is raised.
+  # The second exception may occur when content length for resource that is going to be read
+  # is not defined by server or has been set to wrong value.
+  #
+  # When +ignore_content_overflows+ is set to +false+ no exception is returned but readed data is 
+  # cut at +max_length+ bytes. You may find this option helpful when reading from broken servers
+  # or reading just server headers with data limit set to 0.
+  #
   
   def self.default_options(opts=nil)
     @@default_options ||= DefaultOpts.dup
