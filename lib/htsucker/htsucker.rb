@@ -50,7 +50,7 @@ class HTSucker
      :default_content_type      => :"text/html",
      :default_charset           => :"iso-8859-1"
   }.freeze
-    
+  
   # attr_accessor *DefaultOpts.keys #(but then the rdoc documentation will not reckognize it)
   # :startdoc:
   
@@ -239,7 +239,7 @@ class HTSucker
   end
   private :domain_to_spoken
   
-  # This method returns +true+ if page is declared by server to be in some text format.
+  # This method returns +true+ if page is declared by server as some text document.
   
   def text_content?
     header = @header[:"content-type"]
@@ -254,33 +254,22 @@ class HTSucker
     clang = nil
     prepare_response
     
-    # try meta-tag header
+    # try text headers
     unless (@body.to_s.empty? || !text_content?)
-      header  = @body.scan(/<meta\s*http-equiv\s*=\s*['"]*content-language['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
-      header  = header.flatten.first
-      clang   = extract_content_language(header)
-    end
-    
-    # try lang and xml:lang attribute from HTML tag and do the same for body tag
-    if (clang.to_s.empty? && !@body.to_s.empty? && text_content?)
-      header  = @body.scan(/<x?html\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i)
-      header  = header.flatten.first
-      if header.to_s.empty?
-        header  = @body.scan(/<x?html\s.*?\s+?xml:lang\s*?=["']*([^"']+).*?\/?>/i)
+      # try meta-tag, xml:lang
+      if xml_content? # html, xhtml, xml, sgml
+        # FIXME!!!!!!!!!
+        header  = @body.scan(/<meta\s*http-equiv\s*=\s*['"]*content-language['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
+        header  = @body.scan(/<(?:x?html|xml|sgml)\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i)      if header.empty?
+        header  = @body.scan(/<x?html\s.*?\s+?xml:lang\s*?=["']*([^"']+).*?\/?>/i)  if header.empty?
+        header  = @body.scan(/<body\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i)        if header.empty?
+        header  = @body.scan(/<body\s.*?\s+?xml:lang\s*?=["']*([^"']+).*?\/?>/i)    if header.empty?
         header  = header.flatten.first
+        clang   = extract_content_language(header)
       end
-      if header.to_s.empty?
-        header  = @body.scan(/<body\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i)
-        header  = header.flatten.first
-      end
-      if header.to_s.empty?
-        header  = @body.scan(/<body\s.*?\s+?xml:lang\s*?=["']*([^"']+).*?\/?>/i)
-        header  = header.flatten.first
-      end
-      clang = extract_content_language(header)
     end
 
-    # try server header and in case of 'en' or empty try to figure language by looking at top-domain
+    # try server header and in case of 'en' or empty try to figure language by looking at top-level domain name
     if clang.to_s.empty?
       header  = @header[:"content-language"]
       clang   = extract_content_language(header)
@@ -544,7 +533,7 @@ class HTSucker
     r.gsub!(/<.*?>/m, '')
     return coder.decode(r)
   end
-  
+
   # Transliterates text to ASCII and removes unknown characters.
   
   def clean_text(text=nil, enc=nil)
