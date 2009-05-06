@@ -6,12 +6,12 @@
 # Copyright:: Copyright (c) 2009 Paweł Wilk
 # License::   LGPL
 
+# This module contains class variable containing reference to hash that
+# maps two-letter, top-level domain names to language codes. In most cases
+# these codes refer to spoken languages of the countries assigned to the domains.
+
 module DomainsToLanguages
-    
-    # This hash maps two-letter, top-level domain names to language codes.
-    # In most cases these codes refer to spoken languages of the countries
-    # assigned to the domains.
-    
+        
     @@domain_to_language  =  {
       
       :ad  =>  :es,  :ae  =>  :ar,  :af  =>  :fa,  :ag  =>  :en,  :ai  =>  :en,

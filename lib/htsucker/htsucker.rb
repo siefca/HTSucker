@@ -6,20 +6,22 @@
 # Copyright:: Copyright (c) 2009 Paweł Wilk
 # License::   LGPL
 
-# HTSucker class uses net/http and provides you an easy way of obtaining
-# documents from the Web. It follows redirects and allows you to set up
-# various connection parameters. It is intended to be used in programs
-# getting some information about web pages and processing resources that
-# aren't too big, since it keeps all data in memory.
+# HTSucker is a class that provides an easy way of obtaining documents from the web.
+# It follows redirects and allows you to set up various connection parameters like
+# size limits and timeouts.
 # 
-# It tries to figure out content language using server headers, HTML tags,
-# code markers, and if it fail uses top-level domain to spoken language mapping.
-# It doesn't use any XML object model to access (X)HTML tags, it relies
-# on regular expressions.
+# It is intended to be used in programs getting some information about web pages
+# and processing resources that aren’t too big, since it keeps all data in memory.
 # 
-# All operations are lazy, which means that after creating an object you will still be
-# able to change some connection parameters. Real fetching occur while accessing body,
-# headers or other data that requires network activity.
+# HTSucker tries to figure out content's language using server headers, HTML tags,
+# code markers, and if fails it then uses top-level domain name to spoken
+# language mapping. It doesn't use any XML object model to access (X)HTML tags
+# but relies on regular expressions.
+# 
+# All operations are lazy, which means that after creating an object you will
+# still be able to change some connection parameters. Real data fetching will occur
+# while accessing body, headers or other data that requires network access. This class
+# uses net/http module.
 
 class HTSucker
 
@@ -33,19 +35,20 @@ class HTSucker
   
   # :stopdoc:
   # DefaultOpts constant is a matrix for defaults used by class. You should not change this constant.
-  # If you want to change default options for all instances of HTSucker use class method HTSucker.default_options.
+  # If you want to change default options for all instances of HTSucker use class method default_options.
+  
   DefaultOpts = {
-     :redir_retry              => 8,
-     :conn_retry               => 3,                
-     :open_timeout             => 15,
-     :read_timeout             => 10,
-     :total_timeout            => 30,
-     :allow_strange_ports      => false,
-     :ignore_content_overflows => false,
-     :max_length               => 524288,
-     :default_content_lanuage  => :en,
-     :default_content_type     => :"text/html",
-     :default_charset          => :"iso-8859-1"
+     :redir_retry               => 8,
+     :conn_retry                => 3,                
+     :open_timeout              => 15,
+     :read_timeout              => 10,
+     :total_timeout             => 30,
+     :max_length                => 524288,
+     :allow_strange_ports       => false,
+     :ignore_content_overflows  => false,
+     :default_content_language  => :en,
+     :default_content_type      => :"text/html",
+     :default_charset           => :"iso-8859-1"
   }.freeze
     
   # attr_accessor *DefaultOpts.keys #(but then the rdoc documentation will not reckognize it)
@@ -68,7 +71,7 @@ class HTSucker
   # default: +524288+ bytes (512KB)
   attr_accessor   :max_length
   # default: +:en+
-  attr_accessor   :default_content_lanuage
+  attr_accessor   :default_content_language
   # default: +:text/html+
   attr_accessor   :default_content_type
   # default: +:iso-8859-1+
@@ -92,7 +95,10 @@ class HTSucker
     if options.respond_to?(:keys)
       unknown = (options.keys - default_options.keys).join(', ')
       raise ArgumentError.new("unknown options: #{unknown}") unless unknown.empty?
-      default_options.merge!(options)
+      options.each do |k,v|
+        v = v.downcase.to_sym if v.respond_to?(:downcase)
+        default_options[k.to_s.downcase.to_sym] = v
+      end
     end
     default_options.each_pair do |opt_name,opt_value|
       instance_variable_set("@#{opt_name}", opt_value)
@@ -243,14 +249,14 @@ class HTSucker
   
   # Returns content-language or default content language.
   
-  def content_language(default_content_lanuage=nil)
-    default_content_lanuage ||= @default_content_lanuage
+  def content_language(default_content_language=nil)
+    default_content_language ||= @default_content_language
     clang = nil
     prepare_response
     
     # try meta-tag header
     unless (@body.to_s.empty? || !text_content?)
-      header  = @body.scan(/<meta http-equiv\s*=\s*['"]*content-language['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
+      header  = @body.scan(/<meta\s*http-equiv\s*=\s*['"]*content-language['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
       header  = header.flatten.first
       clang   = extract_content_language(header)
     end
@@ -280,11 +286,11 @@ class HTSucker
       clang   = extract_content_language(header)
       present = clang.to_s
       clang   = domain_to_spoken if (present.empty? || present[0..1] == 'en')
-      clang   = present if (clang.to_s.empty? && !present.empty?)
+      clang   = present.to_sym if (clang.to_s.empty? && !present.empty?)
     end
     
     # try default
-    clang = default_content_lanuage if clang.to_s.empty?
+    clang = default_content_language.to_sym if clang.to_s.empty?
     
     return clang
   end
@@ -303,9 +309,8 @@ class HTSucker
     ctype   = nil
     
     # try server header first time to see if we even can analyze the content
-    
     unless (@body.to_s.empty? || !text_content?)
-      header  = @body.scan(/<meta http-equiv\s*=\s*['"]*content-type['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
+      header  = @body.scan(/<meta\s*http-equiv\s*=\s*['"]*content-type['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
       header  = header.flatten.first
       enc     = extract_charset(header)
       ctype   = extract_content_type(header)
@@ -319,8 +324,8 @@ class HTSucker
     end
     
     # try defaults
-    enc   = default_charset       if enc.to_s.empty?
-    ctype = default_content_type  if ctype.to_s.empty?
+    enc   = default_charset.to_sym       if enc.to_s.empty?
+    ctype = default_content_type.to_sym  if ctype.to_s.empty?
 
     return [ctype, enc]
   end
@@ -351,7 +356,8 @@ class HTSucker
     end
 
     ret_enc = nil if (ret_enc.nil? || ret_enc.squeeze(" ").empty?)
-    return ret_enc.to_s.downcase.to_sym
+    ret_enc = ret_enc.to_s.downcase.to_sym unless ret_enc.nil?
+    return ret_enc
   end
   private :extract_charset
 
@@ -398,8 +404,8 @@ class HTSucker
   # instance variable. It also fills up @header hash and @body. It controls
   # number of bytes read and raises error if the value is exceeded.
   
-  def fetch_response(url, max=nil)
-    max_length = max.nil? ? @max_length : max
+  def fetch_response(url, max=:nul)
+    max_length = max == :nul ? @max_length : max
     char_oriented = String.instance_methods.include?(:bytesize)
     length_bytes = 0
     @body.replace ""
@@ -416,13 +422,13 @@ class HTSucker
           @response.each { |k,v| @header[k.downcase.to_sym] = v }
           @response.value
           header_length = @header[:"content-length"].to_s.to_i
-          if (!@ignore_content_overflows && !max_length.zero? && header_length > max_length)
+          if (!@ignore_content_overflows && !max_length.nil? && header_length > max_length)
             raise HTSuckerContentTooBig.new("content length (#{header_length}) is bigger than #{max_length} bytes")
           end
           @response.read_body do |segment|
             segment_bytes = char_oriented ? segment.bytesize : segment.size
             length_bytes += segment_bytes
-            if !max_length.zero? && length_bytes > max_length
+            if !max_length.nil? && length_bytes > max_length
               @body << segment[0..max_length-length_bytes-1]
               length_bytes = max_length
               raise HTSuckerContentOverflow.new("read data size exceeds #{max_length} bytes, aborting")
@@ -441,7 +447,7 @@ class HTSucker
   
   # This method fetches response through fetch_response and manages retries and connection errors.
   
-  def response_do(max=nil)
+  def response_do(max=:nul)
     url         = @url
     @real_url   = nil
     redir_retry = @redir_retry
@@ -482,7 +488,7 @@ class HTSucker
   
   # Fetches document and headers using HTTP if they are not fetched yet. It also manages timeout.
   
-  def prepare_response(max=nil)
+  def prepare_response(max=:nul)
     return unless @response.nil?
     begin
       Timeout::timeout(@total_timeout) { response_do(max) }
@@ -492,8 +498,10 @@ class HTSucker
   end
   private :prepare_response
   
-  # Returns document body.
-  
+  # Returns document body. If any argument is given, it is passed to response fetching methods.
+  # Currently you may override +max_length+ option by putting numeric value as an argument.
+  # To read more about +max_length+ see description of default_options.
+    
   def body(*args)
     prepare_response(*args)
     return @body
@@ -502,12 +510,17 @@ class HTSucker
   alias_method :fetch, :body
   alias_method :suck,  :body
   
-  # Returns server headers.
-  
+  # Returns server headers hash. All keys are lowercased symbols. If any argument is given,
+  # it is passed to response fetching methods. Currently you may override +max_length+
+  # option by putting numeric value as an argument. To read more about +max_length+
+  # see description of default_options.
+    
   def header(*args)
     prepare_response(*args)
     return @header
   end
+  
+  alias_method :headers, :header
   
   # Returns URL used while obtaining content (e.g. after redirection).
   
@@ -531,9 +544,9 @@ class HTSucker
     r.gsub!(/<.*?>/m, '')
     return coder.decode(r)
   end
-
+  
   # Transliterates text to ASCII and removes unknown characters.
-
+  
   def clean_text(text=nil, enc=nil)
     text            ||= self.body
     enc             ||= self.charset
@@ -558,7 +571,7 @@ class HTSucker
   end
   
   def clean; clean_text end
-
+  
   # Transliterates text to ASCII and removes unknown characters leaving just words.
   
   def clean_words(text=nil, enc=nil)
@@ -578,20 +591,29 @@ class HTSucker
   
   # This class method allows you to to set default options used when creating new instances of HTSucker.
   # Each option that you omit it will be taken from constant hash called +DefaultOpts+.
-  # This method will return current default options when called without parameter.
+  #
+  # This method will return current set of default options when called without parameter.
   #
   # ==== Example
   #
   #     HTSucker.default_options  :total_timeout            => 30,
-  #                               :default_content_lanuage  => 'pl',
+  #                               :default_content_language => 'pl',
   #                               :default_charset          => 'iso-8859-2',
   #                               :ignore_content_overflows => true
   #
   # ==== Options
   #
-  # You can set class-level default options (as shown at the example above), you can pass
-  # options to specific instance when creating new object, you can also change object's options
-  # using accessors (the names are the same as keys presented here). Here are the meanings:
+  # You can set class-level default options (as shown at the example above) – they will be applied
+  # for each newly created object. While creating an object you can pass options as a hash to initializer
+  # – specified options will override class-level defaults. Finally you can also change object's options
+  # using accessors – their names are the same as options' keys.
+  #
+  # All options' names and values are concidered to be lowercase. All keys in class or instance level
+  # hashes keeping options shoud be symbols. All values should be also symbols with the exception of
+  # numeric values. If you will pass string as value for option it will be lowercased and converted
+  # to symbol.
+  # 
+  # List of options:
   #
   # ===== +:redir_retry+
   # Synopsis:
@@ -654,25 +676,64 @@ class HTSucker
   #     ignore_content_overflows  => true   # silently abort reading when data exceeds limit
   #
   # This option decides whether to raise the HTSuckerContentTooBig exception when amount of data
-  # that is going to be read would be greater than max_length limit. It also controlls the same
+  # that is going to be read would be greater than +max_length+ limit. It also controlls the same
   # behaviour in case of data actually read – in that case HTSuckerContentOverflow is raised.
   # The second exception may occur when content length for resource that is going to be read
   # is not defined by server or has been set to wrong value.
   #
   # When +ignore_content_overflows+ is set to +false+ no exception is returned but readed data is 
   # cut at +max_length+ bytes. You may find this option helpful when reading from broken servers
-  # or reading just server headers with data limit set to 0.
+  # or if you just want to know server headers (with data limit set to 0).
   #
+  # ===== +:data_limit+
+  # Synopsis:
+  #     data_limit => 524288  # limit readed data to 512 kilobytes
+  #     data_limit => 0       # limit readed data to 0
+  #     data_limit => nil     # unlimited data size
+  #
+  # This option sets amount of data in bytes that HTSucker object may read while getting
+  # resource from the web. It is used while checking Content-Length header that announces
+  # length of resource which is going to be read and while checking how much data is actually
+  # read. Setting it to some number expresses limit in bytes, setting it to 0 limits incomming
+  # content to zero and setting it to +nil+ disables any length checks.
+  #
+  # Data limitation process is also controlled by option +ignore_content_overflows+ where
+  # you can decide whether you want or not exceptions to be thrown.
+  #
+  # ===== +:default_content_language+
+  # Synopsis:
+  #     default_content_language => :en     # set default content language to English
+  #
+  # This option sets default content language for fetched resources. Its value is returned
+  # when methods like content_language cannot obtain such information by analyzing server
+  # headers and/or content and/or top-level domain of hostname.
+  #
+  # ===== +:default_content_type+
+  # Synopsis:
+  #     default_content_type => 'text/html'  # set default content type to text/html
+  #
+  # This option sets type of content that will be returned by content_type method
+  # when automatic detection (server headers, tags inspection) will fail.
+  #
+  # ===== +:default_charset+
+  # Synopsis:
+  #     default_charset => 'iso-8859-1'     # set default charset
+  #
+  # This option sets charset that will be returned by content_charset method
+  # when automatic detection (server headers, tags inspection) will fail.
   
   def self.default_options(opts=nil)
-    @@default_options ||= DefaultOpts.dup
-    return @@default_options.freeze if opts.nil?
+    @@default_options ||= DefaultOpts.dup.freeze
+    return @@default_options if opts.nil?
     if opts.respond_to?(:keys)
       known_opts = DefaultOpts.keys
       unknown = (opts.keys - known_opts).join(', ')
       raise ArgumentError.new("unknown options: #{unknown}") unless unknown.empty?
       @@default_options.unfreeze
-      @@default_options.merge!(opts)
+      opts.each_pair do |k,v|
+        v = v.to_s.downcase.to_sym if v.respond_to?(:downcase)
+        @@default_options[k.to_s.downcase.to_sym] = v
+      end
       return @@default_options.freeze
     else
       raise ArgumentError.new("malformed options")
