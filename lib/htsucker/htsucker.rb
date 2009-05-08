@@ -123,8 +123,10 @@ class HTSucker
   # Sets new url.
   
   def url=(url)
-    url = URI.parse(url) unless url.kind_of?(URI)
-    url = URI.parse("http://#{url.to_s}") if url.is_a?(URI::Generic) 
+    url = URI.parse(url.to_s) unless url.kind_of?(URI)
+    if (url.class == URI::Generic && url.scheme.to_s.empty?)
+      url = URI.parse("http://#{url.to_s}")
+    end
     url.path = '/' if url.path.nil? || url.path.empty?
     validate_url(url)
     @url = url
@@ -243,9 +245,20 @@ class HTSucker
   
   def text_content?
     header = @header[:"content-type"]
-    extract_content_type(header).to_s.split('/').first == 'text'
+    ct = extract_content_type(header).to_s.split('/')
+    ct.first == 'text' || ct.first == 'message' ||
+    (ct.first == 'application' && ct.last =~ /(xsl|xml|x?html|sgml)(\+xml|\+xsl)?/i)
   end
   private :text_content?
+  
+  # This method returns +true+ if page is declared by server as some text/html document.
+  
+  def xml_content?
+    header = @header[:"content-type"]
+    extract_content_type(header).to_s.split('/')[1] =~ /xml|xsl|x?html|sgml/i
+  end
+  private :text_content?
+  
   
   # Returns content-language or default content language.
   
@@ -260,7 +273,7 @@ class HTSucker
       if xml_content? # html, xhtml, xml, sgml
         # FIXME!!!!!!!!!
         header  = @body.scan(/<meta\s*http-equiv\s*=\s*['"]*content-language['"]*\s*content\s*=\s*['"]*\s*(.*?)\s*['"]*\s*\/?>/i)
-        header  = @body.scan(/<(?:x?html|xml|sgml)\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i)      if header.empty?
+        header  = @body.scan(/<(?:x?html|xml|sgml)\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i) if header.empty?
         header  = @body.scan(/<x?html\s.*?\s+?xml:lang\s*?=["']*([^"']+).*?\/?>/i)  if header.empty?
         header  = @body.scan(/<body\s.*?\s+?lang\s*?=["']*([^"']+).*?\/?>/i)        if header.empty?
         header  = @body.scan(/<body\s.*?\s+?xml:lang\s*?=["']*([^"']+).*?\/?>/i)    if header.empty?
@@ -304,14 +317,20 @@ class HTSucker
       enc     = extract_charset(header)
       ctype   = extract_content_type(header)
     end
-    
+      
     # try server header
     if ctype.to_s.empty?
       header  = @header[:"content-type"]
       ctype   = extract_content_type(header)
-      enc     = extract_charset(header) if enc.to_s.empty? # weird but may happend (page with charset encoding but without type)
+      enc     = extract_charset(header) if enc.to_s.empty?  # weird but may happend (page with charset encoding but without type)
+      if ((enc.to_s.empty? || enc == :'iso-8859-1') && text_content?) # standard server header or no header, so try to guess
+        if (Kernel.const_defined?(:CMess) && CMess.const_defined?(:GuessEncoding))
+          r = CMess::GuessEncoding::Automatic.guess(@body)
+          enc = r.to_s.downcase.to_sym unless r == Encoding::UNKNOWN  # verify on 1.8
+        end
+      end
     end
-    
+            
     # try defaults
     enc   = default_charset.to_sym       if enc.to_s.empty?
     ctype = default_content_type.to_sym  if ctype.to_s.empty?
@@ -374,18 +393,19 @@ class HTSucker
   
   def http_resource(url)
     res = Net::HTTP.new(url.host, url.port)
+    req = Net::HTTP::Get.new(url.path)
     res.open_timeout = @open_timeout
     res.read_timeout = @read_timeout
     case url.scheme.downcase.to_sym
     when :http
-      return res
+      return [res, req]
     when :https
       res.use_ssl     = true
       res.verify_mode = OpenSSL::SSL::VERIFY_NONE
     else
       raise HTSuckerBadProtocol("unknown protocol #{url.scheme}")
     end
-    return res
+    return [res, req]
   end
   private :http_resource
   
@@ -401,8 +421,7 @@ class HTSucker
     @header.clear
     
     max_length = max_length.to_s.to_i
-    http_req = Net::HTTP::Get.new(url.path)
-    http = http_resource(url)
+    http, http_req = http_resource(url)
     
     begin
       http.start do

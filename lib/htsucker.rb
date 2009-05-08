@@ -33,6 +33,7 @@ require 'uri'
 
 require 'iconv'
 require 'htmlentities'
+require 'cmess' unless String.instance_methods.include?(:bytesize)
 
 require 'bufferaffects'
 require 'htsucker/domains_to_languages'
@@ -42,7 +43,7 @@ require 'htsucker/htsucker'
 ## testing:
 #
 #sites = []
-#sites << 'wykop.pl'
+#sites << 'http://wykop.pl'
 #sites << 'poland.com'
 #sites << 'hyperreal.info'
 #sites << 'grono.net'
@@ -51,6 +52,6 @@ require 'htsucker/htsucker'
 #sites << 'heise-online.de'
 #
 #sites.each do |site|
-#  pa = HTSucker.new(site, :ignore_content_overflows => true)
-#  puts "#{pa.real_url}: #{pa.language} #{pa.charset}"
+#  pa = HTSucker.new(site)
+#  puts "[#{pa.body.size/1024}KB] #{pa.real_url}: #{pa.language} #{pa.charset}"
 #end
