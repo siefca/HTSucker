@@ -48,7 +48,11 @@ class HTSucker
      :ignore_content_overflows  => false,
      :default_content_language  => :en,
      :default_content_type      => :"text/html",
-     :default_charset           => :"iso-8859-1"
+     :default_charset           => :"iso-8859-1",
+     :ip_blacklist              => [],
+     :ip_whitelist              => [],
+     :host_blacklist            => [],
+     :host_whitelist            => []
   }.freeze
   
   # attr_accessor *DefaultOpts.keys #(but then the rdoc documentation will not reckognize it)
@@ -76,6 +80,14 @@ class HTSucker
   attr_accessor   :default_content_type
   # default: +:iso-8859-1+
   attr_accessor   :default_charset
+  # default: []
+  attr_accessor   :ip_blacklist
+  # default: []
+  attr_accessor   :ip_whitelist
+  # default: []
+  attr_accessor   :host_blacklist
+  # default: []
+  attr_accessor   :host_whitelist
   
   # Creates new instance of HTSucker. +url+ parameter should be valid URI object or string.
   # You may want to override default options by issuing hash containing with options you
@@ -104,6 +116,12 @@ class HTSucker
       instance_variable_set("@#{opt_name}", opt_value)
     end
     reset_buffers
+    @ip_whitelist.map! {|a| a.is_a?(IPAddr) ? a : obj_to_ip(a)}
+    @ip_blacklist.map! {|a| a.is_a?(IPAddr) ? a : obj_to_ip(a)}
+    @host_whitelist.map! {|a| a.is_a?(Symbol) ? a : a.to_s.to_sym}
+    @host_blacklist.map! {|a| a.is_a?(Symbol) ? a : a.to_s.to_sym}
+    @ip_whitelist.flatten!
+    @ip_blacklist.flatten!
     self.url = url
   end
   
@@ -206,6 +224,8 @@ class HTSucker
     return ctype.to_sym
   end
   
+  # This method is called each time new URL is in use.
+  
   def validate_url(url)
     raise HTSuckerMalformedURI.new("malformed URI") if url.to_s.empty?
     u_protocol = url.scheme.downcase.to_sym
@@ -218,8 +238,12 @@ class HTSucker
         raise HTSuckerBadPort.new("strange port number: #{url.port}")
       end
     end
+    validate_name(url.host)
+    validate_ip(url.host)
   end
   private :validate_url
+  
+  # This method is called each time redirect is going to be performed.
   
   def validate_redirect(url1, url2)
     if url1.scheme.downcase != url2.scheme.downcase
@@ -227,6 +251,38 @@ class HTSucker
     end
   end
   private :validate_redirect
+  
+  # This method is called to verify whether IP ot IPs are banned from connecting to.
+  
+  def validate_ip(obj)
+    remote_addrs = self.class.obj_to_ip(obj)
+    @ip_blacklist.each do |blackaddr|
+      remote_addrs.each do |remote_addr|
+        if blackaddr.include?(remote_addr)
+          white = false
+          @ip_whitelist.each do |whiteaddr|
+            white = true if whiteaddr.include?(remote_addr)
+          end
+          if white == false
+            raise HTSuckerPeerBlacklisted.new("address #{remote_addr} is blacklisted")
+          end
+        end
+      end
+    end
+  end
+  private :validate_ip
+
+  # This method is called to verify whether hostname is banned from connecting to.
+  
+  def validate_name(name)
+    name = name.to_s.downcase.to_sym unless name.is_a?(Symbol)
+    if @host_blacklist.include?(name)
+      unless @host_whitelist.include?(name)
+        raise HTSuckerPeerBlacklisted.new("hostname #{name} is blacklisted")
+      end
+    end
+  end
+  private :validate_name
   
   # Translates top-level domain to spoken language code.
   
@@ -425,6 +481,7 @@ class HTSucker
     
     begin
       http.start do
+        validate_ip(http)
         resp = http.request(http_req) do |resp|
           @response = resp
           @response.each { |k,v| @header[k.downcase.to_sym] = v }
@@ -597,17 +654,58 @@ class HTSucker
     self.clean_words.split(' ')
   end
   
+  # Simple helper that converts names to IPAddr objects. It returns array of addresses.
+  # Allowed input: string (DNS name), number (IP address representation),  IPSocket, IPAddr,
+  # Net::HTTP and arrays of those.
+  
+  def self.obj_to_ip(*obj)
+    if obj.kind_of?(Array)
+      if obj.size == 1
+        obj = obj.first
+      else
+        ary = []
+        obj.each { |o| ary += obj_to_ip(o) }
+        ary.flatten!
+        return ary
+      end
+    end
+    if obj.instance_variable_defined?(:@socket)
+      obj = IPSocket.for_fd(obj.instance_variable_get(:@socket).io.to_i)
+    end
+    if obj.respond_to?(:do_not_reverse_lookup)
+      obj.do_not_reverse_lookup = true
+      obj = obj.peeraddr[3]
+    end
+    if obj.is_a?(String)
+      if (obj =~ /^\d{1,39}$/ && obj.to_i <= 340282366920938463463374607431768211455)
+        obj = obj.to_i
+      else
+        begin
+          obj = IPAddr.new(obj)
+        rescue ArgumentError
+          return Resolv::getaddresses(obj).map { |addr| IPAddr.new(addr) }
+        end
+      end
+    end
+    if obj.is_a?(Fixnum)
+      obj = IPAddr.new(obj, obj <= 4294967295 ? Socket::AF_INET : Socket::AF_INET6)
+    end
+    return obj.is_a?(IPAddr) ? [obj] : [IPAddr.new(obj)]
+  end
+  
   # This class method allows you to to set default options used when creating new instances of HTSucker.
-  # Each option that you omit it will be taken from constant hash called +DefaultOpts+.
+  # Each option that you omit will be copied from constant hash called +DefaultOpts+.
   #
   # This method will return current set of default options when called without parameter.
   #
-  # ==== Example
+  # ==== Examples
   #
   #     HTSucker.default_options  :total_timeout            => 30,
   #                               :default_content_language => 'pl',
   #                               :default_charset          => 'iso-8859-2',
   #                               :ignore_content_overflows => true
+  #
+  #     global_default_charset = HTSucker.default_options[:default_charset]
   #
   # ==== Options
   #
@@ -729,65 +827,63 @@ class HTSucker
   #
   # This option sets charset that will be returned by content_charset method
   # when automatic detection (server headers, tags inspection) will fail.
-  
-  def self.default_options(opts=nil)
-    @@default_options ||= DefaultOpts.dup.freeze
-    return @@default_options if opts.nil?
-    if opts.respond_to?(:keys)
-      known_opts = DefaultOpts.keys
-      unknown = (opts.keys - known_opts).join(', ')
-      raise ArgumentError.new("unknown options: #{unknown}") unless unknown.empty?
-      @@default_options.unfreeze
-      opts.each_pair do |k,v|
-        v = v.to_s.downcase.to_sym if v.respond_to?(:downcase)
-        @@default_options[k.to_s.downcase.to_sym] = v
-      end
-      return @@default_options.freeze
-    else
-      raise ArgumentError.new("malformed options")
-    end
-  end
-  
-  # This class method helps to build white- and blacklists for IP addresses.
-  
-  def self.ip_list(storage, list)
-    storage ||= []
-    return storage if list.nil?
-    storage = list.map {|a| a.is_a?(IPAddr) ? a.freeze : IPAddr.new(a.to_s)}
-  end
-  private_class_method :ip_list
-  
-  # This class method lets you define whitelist of IP addresses. If this list is set
+  #
+  # ===== +:ip_whitelist+
+  # Synopsis:
+  #     ip_whitelist => []                # set default white list
+  #
+  # This option lets you define a white list of IP addresses. If this list is set
   # then these addresses will be used by all HTSucker objects while checking URIs.
   # This list has meaning when blacklist is also set – it simply allows to create
   # exceptions from rules present there. It uses default resolver to
   # obtain IP addresses for DNS names used as hostnames.
   #
-  # The list should be an array of strings or symbols, which will be changed to IPAddr
-  # objects. They may be single IPs or netmasks. Example: +ip_whitelist 192.168.0.0/16+
-  
-  def self.ip_whitelist(list=nil)
-    ip_list @@ip_whitelist, list
-  end
-
-  # This class method lets you define blacklist of IP addresses. If this list is set
+  # The list should be an array of strings, symbols or IPAddr objects, which will be
+  # changed to IPAddr objects. If there are any names of hosts they will be resolved
+  # at the very moment of adding to list.
+  # 
+  # The strings may be single IPs with netmasks to create ranges.
+  # Example: +:ip_whitelist => 192.168.0.2+
+  #
+  # ===== +:ip_blacklist+
+  # Synopsis:
+  #     ip_blacklist => []                # set default black list
+  #  
+  # This class method lets you define black list of IP addresses. If this list is set
   # then these addresses will be used by all HTSucker objects while checking URIs.
   # It contains addresses that HTSucker will refuse to handle and throw an exception
   # if you or some redirect will try to use them. It uses default resolver to
   # obtain IP addresses for DNS names used as hostnames.
   #
-  # The list should be an array of strings or symbols, which will be changed to IPAddr
-  # objects. They may be single IPs or netmasks. Example: +ip_whitelist 192.168.0.0/16+
+  # The list should be an array of strings, symbols or IPAddr objects, which will be
+  # changed to IPAddr objects. If there are any names of hosts they will be resolved
+  # at the very moment of adding to list.
+  # 
+  # The strings may be single IPs with netmasks to create ranges.
+  # Example: +:ip_blacklist => 192.168.0.0/16+
   
-  def self.ip_blacklist(list=nil)
-    ip_list @@ip_blacklist, list
+  def self.default_options(opts=nil)
+    @@default_options ||= DefaultOpts.dup
+    return @@default_options if opts.nil?
+    if opts.respond_to?(:keys)
+      known_opts = DefaultOpts.keys
+      unknown = (opts.keys - known_opts).join(', ')
+      raise ArgumentError.new("unknown options: #{unknown}") unless unknown.empty?
+      opts.each_pair do |k,v|
+        v = v.to_s.downcase.to_sym if v.respond_to?(:downcase)
+        @@default_options[k.to_s.downcase.to_sym] = v
+      end
+      @@default_options[:ip_whitelist].map! {|a| a.is_a?(IPAddr) ? a : obj_to_ip(a)}
+      @@default_options[:ip_blacklist].map! {|a| a.is_a?(IPAddr) ? a : obj_to_ip(a)}
+      @@default_options[:host_whitelist].map! {|a| a.is_a?(Symbol) ? a : a.to_s.to_sym}
+      @@default_options[:host_blacklist].map! {|a| a.is_a?(Symbol) ? a : a.to_s.to_sym}
+      @@default_options[:ip_whitelist].flatten!
+      @@default_options[:ip_blacklist].flatten!
+      return @@default_options
+    else
+      raise ArgumentError.new("malformed options")
+    end
   end
-  
-  def self.host_whitelist
-  end
-  
-  def self.host_blacklist
-  end
-  
+    
 end
 

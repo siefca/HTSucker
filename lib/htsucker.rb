@@ -25,7 +25,7 @@
 
 require 'resolv'
 require 'ipaddr'
-
+require 'socket'
 require 'net/http'
 require 'net/https'
 require 'timeout'
@@ -50,6 +50,8 @@ require 'htsucker/htsucker'
 #sites << 'google.pl'
 #sites << 'randomseed.pl'
 #sites << 'heise-online.de'
+#
+#HTSucker.default_options :host_blacklist => ["grono.net"]
 #
 #sites.each do |site|
 #  pa = HTSucker.new(site)

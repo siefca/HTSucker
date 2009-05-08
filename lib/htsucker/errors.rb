@@ -77,3 +77,7 @@ class HTSuckerBadURI < HTSuckerError; end
 
   class HTSuckerURIPhohibited < HTSuckerBadURI; end
 
+  # This class handles exceptions caused by unsecure connection attempts.
+  
+  class HTSuckerPeerBlacklisted < HTSuckerBadURI; end
+
